@@ -91,6 +91,9 @@ type Config struct {
 	// OAuthExcludedModels defines per-provider global model exclusions applied to OAuth/file-backed auth entries.
 	OAuthExcludedModels map[string][]string `yaml:"oauth-excluded-models,omitempty" json:"oauth-excluded-models,omitempty"`
 
+	// Copilot configures GitHub Copilot integration via the external copilot-api process.
+	Copilot CopilotConfig `yaml:"copilot" json:"copilot"`
+
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
 
@@ -200,6 +203,37 @@ type PayloadModelRule struct {
 	Name string `yaml:"name" json:"name"`
 	// Protocol restricts the rule to a specific translator format (e.g., "gemini", "responses").
 	Protocol string `yaml:"protocol" json:"protocol"`
+}
+
+// CopilotConfig configures GitHub Copilot integration via the external copilot-api process.
+// When enabled, CLIProxyAPI spawns and manages a copilot-api Node.js process that provides
+// an OpenAI-compatible API endpoint backed by GitHub Copilot.
+type CopilotConfig struct {
+	// Enable toggles whether the Copilot integration is active.
+	Enable bool `yaml:"enable" json:"enable"`
+
+	// Port is the port on which copilot-api will listen. Default: 54546.
+	Port int `yaml:"port" json:"port"`
+
+	// AccountType specifies the GitHub Copilot subscription type.
+	// Supported values: "individual" (default), "business", "enterprise".
+	AccountType string `yaml:"account-type" json:"account-type"`
+
+	// GithubToken is an optional pre-configured GitHub token for non-interactive auth.
+	// If empty, the device code flow will be used for authentication.
+	GithubToken string `yaml:"github-token" json:"github-token"`
+
+	// RateLimit is the minimum seconds between requests (0 = no limit).
+	RateLimit int `yaml:"rate-limit" json:"rate-limit"`
+
+	// RateLimitWait controls rate limit behavior.
+	// When true, requests wait until the rate limit clears.
+	// When false (default), rate-limited requests return an error immediately.
+	RateLimitWait bool `yaml:"rate-limit-wait" json:"rate-limit-wait"`
+
+	// AutoStart controls whether copilot-api starts automatically with the proxy.
+	// When true, the copilot-api process is spawned on proxy startup.
+	AutoStart bool `yaml:"auto-start" json:"auto-start"`
 }
 
 // ClaudeKey represents the configuration for a Claude API key,
@@ -367,6 +401,8 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.UsageStatisticsEnabled = false
 	cfg.DisableCooling = false
 	cfg.AmpCode.RestrictManagementToLocalhost = false // Default to false: API key auth is sufficient
+	cfg.Copilot.Port = 54546                          // Default copilot-api port
+	cfg.Copilot.AccountType = "individual"            // Default to individual subscription
 	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
 	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		if optional {

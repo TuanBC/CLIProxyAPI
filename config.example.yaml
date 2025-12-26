@@ -201,6 +201,18 @@ ws-auth: false
 #   iflow:
 #     - "tstars2.0"
 
+# GitHub Copilot Integration
+# Requires Node.js installed on the system. Uses the copilot-api npm package to provide
+# an OpenAI-compatible API endpoint backed by your GitHub Copilot subscription.
+# copilot:
+#   enable: false                    # Enable Copilot integration
+#   port: 54546                      # Port for copilot-api server (default: 54546)
+#   account-type: "individual"       # Subscription type: "individual", "business", or "enterprise"
+#   github-token: ""                 # Optional: pre-configured GitHub token for non-interactive auth
+#   rate-limit: 0                    # Minimum seconds between requests (0 = no limit)
+#   rate-limit-wait: false           # Wait for rate limit instead of returning error
+#   auto-start: false                # Start copilot-api automatically with the proxy
+
 # Optional payload configuration
 # payload:
 #   default: # Default rules only set parameters when they are missing in the payload.

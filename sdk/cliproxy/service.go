@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/copilot"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/runtime/executor"
 	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
@@ -86,6 +87,9 @@ type Service struct {
 
 	// wsGateway manages websocket Gemini providers.
 	wsGateway *wsrelay.Manager
+
+	// copilotManager manages the copilot-api external process.
+	copilotManager *copilot.Manager
 }
 
 // RegisterUsagePlugin registers a usage plugin on the global usage manager.
@@ -379,6 +383,8 @@ func (s *Service) ensureExecutorsForAuth(a *coreauth.Auth) {
 		s.coreManager.RegisterExecutor(executor.NewQwenExecutor(s.cfg))
 	case "iflow":
 		s.coreManager.RegisterExecutor(executor.NewIFlowExecutor(s.cfg))
+	case "copilot":
+		s.coreManager.RegisterExecutor(executor.NewCopilotExecutor(s.cfg))
 	default:
 		providerKey := strings.ToLower(strings.TrimSpace(a.Provider))
 		if providerKey == "" {
@@ -503,6 +509,9 @@ func (s *Service) Run(ctx context.Context) error {
 	if s.hooks.OnAfterStart != nil {
 		s.hooks.OnAfterStart(s)
 	}
+
+	// Start Copilot manager if enabled and auto-start is configured
+	s.startCopilotIfEnabled(ctx)
 
 	var watcherWrapper *WatcherWrapper
 	reloadCallback := func(newCfg *config.Config) {
@@ -648,6 +657,13 @@ func (s *Service) Shutdown(ctx context.Context) error {
 			}
 		}
 
+		// Stop Copilot manager if running
+		if s.copilotManager != nil {
+			if err := s.copilotManager.Stop(); err != nil {
+				log.Warnf("failed to stop copilot-api: %v", err)
+			}
+		}
+
 		usage.StopDefault()
 	})
 	return shutdownErr
@@ -751,6 +767,9 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 		models = applyExcludedModels(models, excluded)
 	case "iflow":
 		models = registry.GetIFlowModels()
+		models = applyExcludedModels(models, excluded)
+	case "copilot":
+		models = registry.GetCopilotModels()
 		models = applyExcludedModels(models, excluded)
 	default:
 		// Handle OpenAI-compatibility providers by name using config
@@ -1178,4 +1197,107 @@ func buildClaudeConfigModels(entry *config.ClaudeKey) []*ModelInfo {
 		})
 	}
 	return out
+}
+
+// startCopilotIfEnabled starts the Copilot manager if enabled in config with auto-start.
+func (s *Service) startCopilotIfEnabled(ctx context.Context) {
+	if s.cfg == nil || !s.cfg.Copilot.Enable || !s.cfg.Copilot.AutoStart {
+		return
+	}
+
+	// Check if Node.js/npx is available
+	detection := copilot.Detect()
+	if !detection.NodeAvailable {
+		log.Warnf("Copilot auto-start skipped: %s", detection.ErrorMessage)
+		return
+	}
+
+	// Create and start the Copilot manager
+	s.copilotManager = copilot.NewManager(&s.cfg.Copilot)
+	
+	// Set auth handler to log device code events
+	s.copilotManager.SetAuthHandler(func(event copilot.AuthEvent) {
+		switch event.Type {
+		case "device_code":
+			log.Infof("Copilot auth required: %s", event.Message)
+			if event.URL != "" {
+				log.Infof("Please visit %s and enter the code shown", event.URL)
+			}
+		case "authenticated":
+			log.Info("Copilot authentication successful")
+			// Register Copilot models now that we're authenticated
+			s.registerCopilotModels()
+		}
+	})
+
+	if err := s.copilotManager.Start(ctx); err != nil {
+		log.Errorf("Failed to start copilot-api: %v", err)
+		return
+	}
+
+	log.Infof("Copilot manager started on port %d", s.cfg.Copilot.Port)
+
+	// Register Copilot models immediately so they're available for routing
+	// This needs to happen even before health check passes
+	s.registerCopilotModels()
+
+	// Give copilot-api a moment to initialize, then check health
+	go func() {
+		time.Sleep(3 * time.Second)
+		healthCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := s.copilotManager.HealthCheck(healthCtx); err == nil {
+			log.Info("Copilot health check passed")
+		} else {
+			log.Warnf("Copilot health check failed: %v (authentication may be required)", err)
+		}
+	}()
+}
+
+// registerCopilotModels registers Copilot models in the global registry and executor.
+func (s *Service) registerCopilotModels() {
+	models := registry.GetCopilotModels()
+	if len(models) == 0 {
+		return
+	}
+
+	// Register the Copilot executor if core manager exists
+	if s.coreManager != nil {
+		s.coreManager.RegisterExecutor(executor.NewCopilotExecutor(s.cfg))
+
+		// Register a synthetic auth record so the auth manager can route to Copilot
+		syntheticAuth := &coreauth.Auth{
+			ID:       "copilot",
+			Provider: "copilot",
+			Label:    "GitHub Copilot",
+			Status:   coreauth.StatusActive,
+			Attributes: map[string]string{
+				"auth_kind": "synthetic",
+			},
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if _, err := s.coreManager.Register(context.Background(), syntheticAuth); err != nil {
+			log.Warnf("failed to register synthetic copilot auth: %v", err)
+		}
+	}
+
+	// Convert to ModelInfo slice
+	regModels := make([]*ModelInfo, len(models))
+	for i, m := range models {
+		regModels[i] = &ModelInfo{
+			ID:                  m.ID,
+			Object:              m.Object,
+			Created:             m.Created,
+			OwnedBy:             m.OwnedBy,
+			Type:                m.Type,
+			DisplayName:         m.DisplayName,
+			Description:         m.Description,
+			ContextLength:       m.ContextLength,
+			MaxCompletionTokens: m.MaxCompletionTokens,
+		}
+	}
+
+	GlobalModelRegistry().RegisterClient("copilot", "copilot", regModels)
+	log.Infof("Registered %d Copilot models", len(regModels))
 }

@@ -781,3 +781,105 @@ func GetAntigravityModelConfig() map[string]*AntigravityModelConfig {
 		"gemini-claude-opus-4-5-thinking":         {Thinking: &ThinkingSupport{Min: 1024, Max: 200000, ZeroAllowed: false, DynamicAllowed: true}, MaxCompletionTokens: 64000},
 	}
 }
+
+// GetCopilotModels returns the model definitions available via GitHub Copilot.
+// These models are accessible through the copilot-api proxy using the copilot- prefix.
+func GetCopilotModels() []*ModelInfo {
+	return []*ModelInfo{
+		// OpenAI GPT models
+		{
+			ID:                  "copilot-gpt-4o",
+			Object:              "model",
+			Created:             1715644800,
+			OwnedBy:             "copilot",
+			Type:                "copilot",
+			DisplayName:         "GPT-4o (Copilot)",
+			Description:         "OpenAI GPT-4o via GitHub Copilot",
+			ContextLength:       128000,
+			MaxCompletionTokens: 16384,
+		},
+		{
+			ID:                  "copilot-gpt-4-turbo",
+			Object:              "model",
+			Created:             1715644800,
+			OwnedBy:             "copilot",
+			Type:                "copilot",
+			DisplayName:         "GPT-4 Turbo (Copilot)",
+			Description:         "OpenAI GPT-4 Turbo via GitHub Copilot",
+			ContextLength:       128000,
+			MaxCompletionTokens: 4096,
+		},
+		{
+			ID:                  "copilot-gpt-4.1",
+			Object:              "model",
+			Created:             1754524800,
+			OwnedBy:             "copilot",
+			Type:                "copilot",
+			DisplayName:         "GPT-4.1 (Copilot)",
+			Description:         "OpenAI GPT-4.1 via GitHub Copilot",
+			ContextLength:       400000,
+			MaxCompletionTokens: 128000,
+		},
+		// Anthropic Claude models
+		{
+			ID:                  "copilot-claude-sonnet-4",
+			Object:              "model",
+			Created:             1715644800,
+			OwnedBy:             "copilot",
+			Type:                "copilot",
+			DisplayName:         "Claude Sonnet 4 (Copilot)",
+			Description:         "Anthropic Claude Sonnet 4 via GitHub Copilot",
+			ContextLength:       200000,
+			MaxCompletionTokens: 64000,
+			Thinking:            &ThinkingSupport{Min: 1024, Max: 100000, ZeroAllowed: false, DynamicAllowed: true},
+		},
+		{
+			ID:                  "copilot-claude-sonnet-4.5",
+			Object:              "model",
+			Created:             1759104000,
+			OwnedBy:             "copilot",
+			Type:                "copilot",
+			DisplayName:         "Claude Sonnet 4.5 (Copilot)",
+			Description:         "Anthropic Claude Sonnet 4.5 via GitHub Copilot",
+			ContextLength:       200000,
+			MaxCompletionTokens: 64000,
+			Thinking:            &ThinkingSupport{Min: 1024, Max: 100000, ZeroAllowed: false, DynamicAllowed: true},
+		},
+		{
+			ID:                  "copilot-claude-opus-4.5",
+			Object:              "model",
+			Created:             1761955200,
+			OwnedBy:             "copilot",
+			Type:                "copilot",
+			DisplayName:         "Claude Opus 4.5 (Copilot)",
+			Description:         "Anthropic Claude Opus 4.5 via GitHub Copilot",
+			ContextLength:       200000,
+			MaxCompletionTokens: 64000,
+			Thinking:            &ThinkingSupport{Min: 1024, Max: 100000, ZeroAllowed: false, DynamicAllowed: true},
+		},
+		{
+			ID:                  "copilot-claude-haiku-4.5",
+			Object:              "model",
+			Created:             1759276800,
+			OwnedBy:             "copilot",
+			Type:                "copilot",
+			DisplayName:         "Claude Haiku 4.5 (Copilot)",
+			Description:         "Anthropic Claude Haiku 4.5 via GitHub Copilot",
+			ContextLength:       200000,
+			MaxCompletionTokens: 64000,
+		},
+		// Google Gemini models
+		{
+			ID:                  "copilot-gemini-2.5-pro",
+			Object:              "model",
+			Created:             1750118400,
+			OwnedBy:             "copilot",
+			Type:                "copilot",
+			DisplayName:         "Gemini 2.5 Pro (Copilot)",
+			Description:         "Google Gemini 2.5 Pro via GitHub Copilot",
+			ContextLength:       1048576,
+			MaxCompletionTokens: 65536,
+			Thinking:            &ThinkingSupport{Min: 128, Max: 32768, ZeroAllowed: false, DynamicAllowed: true},
+		},
+	}
+}

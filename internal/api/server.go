@@ -591,6 +591,13 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.POST("/iflow-auth-url", s.mgmt.RequestIFlowCookieToken)
 		mgmt.POST("/oauth-callback", s.mgmt.PostOAuthCallback)
 		mgmt.GET("/get-auth-status", s.mgmt.GetAuthStatus)
+
+		// Copilot integration endpoints
+		mgmt.GET("/copilot/status", s.mgmt.GetCopilotStatus)
+		mgmt.POST("/copilot/start", s.mgmt.StartCopilot)
+		mgmt.POST("/copilot/stop", s.mgmt.StopCopilot)
+		mgmt.GET("/copilot/detect", s.mgmt.DetectCopilotAPI)
+		mgmt.GET("/copilot/health", s.mgmt.HealthCheckCopilot)
 	}
 }
 
