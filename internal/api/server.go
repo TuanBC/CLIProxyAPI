@@ -6,11 +6,19 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/subtle"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -34,6 +42,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers/gemini"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers/openai"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+	privategpthandler "github.com/router-for-me/CLIProxyAPI/v6/internal/api/handlers/privategpt"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 )
@@ -150,6 +159,9 @@ type Server struct {
 	// management handler
 	mgmt *managementHandlers.Handler
 
+	// privateGPT handler
+	privateGPT *privategpthandler.PrivateGPTHandler
+
 	// ampModule is the Amp routing module for model mapping hot-reload
 	ampModule *ampmodule.AmpModule
 
@@ -243,6 +255,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		currentPath:         wd,
 		envManagementSecret: envManagementSecret,
 		wsRoutes:            make(map[string]struct{}),
+		privateGPT:          privategpthandler.NewPrivateGPTHandler(handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager), &cfg.PrivateGPT),
 	}
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
 	// Save initial YAML snapshot
@@ -269,15 +282,18 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	s.setupRoutes()
 
 	// Register Amp module using V2 interface with Context
-	s.ampModule = ampmodule.NewLegacy(accessManager, AuthMiddleware(accessManager))
-	ctx := modules.Context{
-		Engine:         engine,
-		BaseHandler:    s.handlers,
-		Config:         cfg,
-		AuthMiddleware: AuthMiddleware(accessManager),
-	}
-	if err := modules.RegisterModule(ctx, s.ampModule); err != nil {
-		log.Errorf("Failed to register Amp module: %v", err)
+	// Skip if PrivateGPT is enabled to avoid route conflicts (specifically /auth)
+	if !cfg.PrivateGPT.Enable {
+		s.ampModule = ampmodule.NewLegacy(accessManager, AuthMiddleware(accessManager))
+		ctx := modules.Context{
+			Engine:         engine,
+			BaseHandler:    s.handlers,
+			Config:         cfg,
+			AuthMiddleware: AuthMiddleware(accessManager),
+		}
+		if err := modules.RegisterModule(ctx, s.ampModule); err != nil {
+			log.Errorf("Failed to register Amp module: %v", err)
+		}
 	}
 
 	// Apply additional router configurators from options
@@ -338,6 +354,10 @@ func (s *Server) setupRoutes() {
 
 	// Root endpoint
 	s.engine.GET("/", func(c *gin.Context) {
+		if s.cfg.PrivateGPT.Enable {
+			s.privateGPT.ProxyHandler(c)
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"message": "CLI Proxy API Server",
 			"endpoints": []string{
@@ -347,6 +367,14 @@ func (s *Server) setupRoutes() {
 			},
 		})
 	})
+
+	if s.cfg.PrivateGPT.Enable {
+		// PrivateGPT specific endpoints
+		s.engine.GET("/privategpt/token", s.privateGPT.GetCapturedToken)
+
+		// Use NoRoute to catch all other paths not matched by API routes and proxy them to PrivateGPT
+		s.engine.NoRoute(s.privateGPT.ProxyHandler)
+	}
 	s.engine.POST("/v1internal:method", geminiCLIHandlers.CLIHandler)
 
 	// OAuth callback endpoints (reuse main server port)
@@ -746,6 +774,41 @@ func (s *Server) Start() error {
 	}
 
 	useTLS := s.cfg != nil && s.cfg.TLS.Enable
+
+	log.Infof("Checking DevMode: Enable=%v, DevMode=%v", s.cfg.PrivateGPT.Enable, s.cfg.PrivateGPT.DevMode)
+
+	// PrivateGPT Dev Mode Overrides
+	if s.cfg != nil && s.cfg.PrivateGPT.Enable && s.cfg.PrivateGPT.DevMode {
+		log.Warn("Starting PrivateGPT Dev Mode: Overriding Port to 443 and enabling TLS with self-signed cert.")
+		s.cfg.Port = 443
+		s.server.Addr = fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+		useTLS = true
+		
+		// Generate self-signed cert if not provided
+		if s.cfg.TLS.Cert == "" || s.cfg.TLS.Key == "" {
+			certPEM, keyPEM, err := generateSelfSignedCert("privategpt.fptconsulting.co.jp")
+			if err != nil {
+				return fmt.Errorf("failed to generate self-signed cert for dev mode: %v", err)
+			}
+			// Write to temp files because ListenAndServeTLS takes filenames
+			// (Gin/Http server doesn't support in-memory bytes easily without custom listener)
+			tmpDir := os.TempDir()
+			certFile := filepath.Join(tmpDir, "privategpt_dev_cert.pem")
+			keyFile := filepath.Join(tmpDir, "privategpt_dev_key.pem")
+			if err := os.WriteFile(certFile, certPEM, 0644); err != nil {
+				return err
+			}
+			if err := os.WriteFile(keyFile, keyPEM, 0600); err != nil {
+				return err
+			}
+			s.cfg.TLS.Cert = certFile
+			s.cfg.TLS.Key = keyFile
+		}
+		
+		// Launch Browser in background
+		go s.launchDevBrowser("https://privategpt.fptconsulting.co.jp/")
+	}
+
 	if useTLS {
 		cert := strings.TrimSpace(s.cfg.TLS.Cert)
 		key := strings.TrimSpace(s.cfg.TLS.Key)
@@ -1031,4 +1094,79 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Authentication service error"})
 		}
 	}
+}
+// launchDevBrowser opens Chrome with host spoofing flags
+func (s *Server) launchDevBrowser(targetURL string) {
+	// Give server a moment to start
+	time.Sleep(2 * time.Second)
+	
+	log.Infof("Launching Chrome in Dev Mode for %s", targetURL)
+	
+	// Platform specific - Windows only for now as requested
+	// Try standard paths
+	chromePaths := []string{
+		`C:\Program Files\Google\Chrome\Application\chrome.exe`,
+		`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
+		`C:\Program Files\Microsoft\Edge\Application\msedge.exe`, // Fallback to Edge
+	}
+	
+	var chromePath string
+	for _, p := range chromePaths {
+		if _, err := os.Stat(p); err == nil {
+			chromePath = p
+			break
+		}
+	}
+	
+	if chromePath == "" {
+		log.Error("Could not find Chrome or Edge executable. Please open the browser manually with flags.")
+		return
+	}
+	
+	// Flags to spoof DNS and ignore cert errors
+	args := []string{
+		"--host-resolver-rules=MAP privategpt.fptconsulting.co.jp 127.0.0.1",
+		"--ignore-certificate-errors",
+		"--user-data-dir=" + filepath.Join(os.TempDir(), "privategpt_dev_profile"), // Fresh profile
+		targetURL,
+	}
+	
+	cmd := exec.Command(chromePath, args...)
+	if err := cmd.Start(); err != nil {
+		log.Errorf("Failed to launch browser: %v", err)
+	}
+}
+
+// generateSelfSignedCert generates a self-signed certificate and key for the given host
+func generateSelfSignedCert(host string) ([]byte, []byte, error) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"PrivateGPT Dev Proxy"},
+		},
+		NotBefore: time.Now(),
+		NotAfter:  time.Now().Add(24 * time.Hour),
+
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
+	template.DNSNames = []string{host, "localhost"}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
+
+	return certPEM, keyPEM, nil
 }

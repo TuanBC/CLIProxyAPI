@@ -97,6 +97,9 @@ type Config struct {
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
 
+	// PrivateGPT configures the reverse proxy for PrivateGPT.
+	PrivateGPT PrivateGPTConfig `yaml:"privategpt" json:"privategpt"`
+
 	legacyMigrationPending bool `yaml:"-" json:"-"`
 }
 
@@ -234,6 +237,22 @@ type CopilotConfig struct {
 	// AutoStart controls whether copilot-api starts automatically with the proxy.
 	// When true, the copilot-api process is spawned on proxy startup.
 	AutoStart bool `yaml:"auto-start" json:"auto-start"`
+}
+
+// PrivateGPTConfig configures the reverse proxy for PrivateGPT.
+type PrivateGPTConfig struct {
+	// Enable toggles whether the PrivateGPT reverse proxy is active.
+	Enable bool `yaml:"enable" json:"enable"`
+
+	// UpstreamURL is the URL of the upstream PrivateGPT server.
+	UpstreamURL string `yaml:"upstream-url" json:"upstream-url"`
+
+	// SSORedirectRewrite toggles rewriting of the redirect_uri in the JS response to support localhost SSO.
+	SSORedirectRewrite bool `yaml:"sso-redirect-rewrite" json:"sso-redirect-rewrite"`
+
+	// DevMode enables automatic environment setup (self-signed cert, port 443, browser launch)
+	// for development without modifying hosts file.
+	DevMode bool `yaml:"dev-mode" json:"dev-mode"`
 }
 
 // ClaudeKey represents the configuration for a Claude API key,

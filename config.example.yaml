@@ -201,6 +201,13 @@ ws-auth: false
 #   iflow:
 #     - "tstars2.0"
 
+# PrivateGPT Reverse Proxy Integration
+# Proxies requests to an upstream PrivateGPT server and handles SSO redirects.
+privategpt:
+  enable: false
+  upstream-url: "https://privategpt.fptconsulting.co.jp"
+  sso-redirect-rewrite: true
+
 # GitHub Copilot Integration
 # Requires Node.js installed on the system. Uses the copilot-api npm package to provide
 # an OpenAI-compatible API endpoint backed by your GitHub Copilot subscription.
