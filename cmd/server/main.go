@@ -63,8 +63,6 @@ func main() {
 	var noBrowser bool
 	var antigravityLogin bool
 	var copilotLogin bool
-	var copilotLogout bool
-	var copilotStatus bool
 	var projectID string
 	var vertexImport string
 	var configPath string
@@ -80,8 +78,6 @@ func main() {
 	flag.BoolVar(&noBrowser, "no-browser", false, "Don't open browser automatically for OAuth")
 	flag.BoolVar(&antigravityLogin, "antigravity-login", false, "Login to Antigravity using OAuth")
 	flag.BoolVar(&copilotLogin, "copilot-login", false, "Login to GitHub Copilot using device code flow")
-	flag.BoolVar(&copilotLogout, "copilot-logout", false, "Logout from GitHub Copilot")
-	flag.BoolVar(&copilotStatus, "copilot-status", false, "Check GitHub Copilot authentication status")
 	flag.StringVar(&projectID, "project_id", "", "Project ID (Gemini only, not required)")
 	flag.StringVar(&configPath, "config", DefaultConfigPath, "Configure File Path")
 	flag.StringVar(&vertexImport, "vertex-import", "", "Import Vertex service account key JSON file")
@@ -474,12 +470,6 @@ func main() {
 	} else if copilotLogin {
 		// Handle Copilot login
 		cmd.DoCopilotLogin(cfg, options)
-	} else if copilotLogout {
-		// Handle Copilot logout
-		cmd.DoCopilotLogout(cfg, options)
-	} else if copilotStatus {
-		// Handle Copilot status
-		cmd.DoCopilotStatus(cfg, options)
 	} else {
 		// In cloud deploy mode without config file, just wait for shutdown signals
 		if isCloudDeploy && !configFileExists {

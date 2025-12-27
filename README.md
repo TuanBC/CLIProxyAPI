@@ -54,11 +54,42 @@ Get 10% OFF GLM CODING PLAN：https://z.ai/subscribe?ic=8JVLJQFSKB
 - iFlow multi-account load balancing
 - OpenAI Codex multi-account load balancing
 - OpenAI-compatible upstream providers via config (e.g., OpenRouter)
+- GitHub Copilot support (login via `-copilot-login`)
+- PrivateGPT reverse proxy support (dedicated port and dev mode)
 - Reusable Go SDK for embedding the proxy (see `docs/sdk-usage.md`)
 
 ## Getting Started
 
 CLIProxyAPI Guides: [https://help.router-for.me/](https://help.router-for.me/)
+
+### GitHub Copilot Integration
+
+Enable it in `config.yaml` to use Copilot models:
+
+```yaml
+copilot:
+  enable: true
+  port: 54546
+  auto-start: true
+```
+
+Login: `cli-proxy-api.exe -copilot-login`  
+Models (on main port): `curl http://localhost:54546/v1/models` (look for `copilot-` prefix)
+
+### PrivateGPT Integration
+
+Reverse proxy for PrivateGPT instances with dedicated port and SSO support:
+
+```yaml
+privategpt:
+  enable: true
+  port: 54547
+  upstream-url: "https://privategpt.fptconsulting.co.jp"
+  sso-redirect-rewrite: true
+  dev-mode: true
+```
+
+Access PrivateGPT models directly on the configured port: `curl http://localhost:54547/v1/models`
 
 ## Management API
 

@@ -131,60 +131,6 @@ func DoCopilotLogin(cfg *config.Config, options *LoginOptions) {
 	fmt.Println("You can now use copilot-* models in your requests.")
 }
 
-// DoCopilotLogout removes the Copilot authentication tokens.
-func DoCopilotLogout(cfg *config.Config, options *LoginOptions) {
-	if options == nil {
-		options = &LoginOptions{}
-	}
-
-	npxPath, err := findCopilotRunner()
-	if err != nil {
-		log.Errorf("Copilot logout failed: %v", err)
-		return
-	}
-
-	fmt.Println("Logging out of GitHub Copilot...")
-
-	cmd := exec.Command(npxPath, "copilot-api@latest", "auth", "logout")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		log.Errorf("Copilot logout failed: %v", err)
-		return
-	}
-
-	fmt.Println("GitHub Copilot logout successful!")
-}
-
-// DoCopilotStatus checks if Copilot authentication is valid.
-func DoCopilotStatus(cfg *config.Config, options *LoginOptions) {
-	npxPath, err := findCopilotRunner()
-	if err != nil {
-		fmt.Printf("❌ Node.js/npx not found: %v\n", err)
-		fmt.Println("   Install from https://nodejs.org or https://bun.sh")
-		return
-	}
-
-	fmt.Println("Checking GitHub Copilot status...")
-
-	// Try to run a quick auth check
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, npxPath, "copilot-api@latest", "auth", "status")
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		fmt.Println("❌ Not authenticated with GitHub Copilot")
-		fmt.Println("   Run with --copilot-login to authenticate")
-		return
-	}
-
-	fmt.Println(string(output))
-	fmt.Println("✅ GitHub Copilot authentication is valid")
-}
-
 // findCopilotRunner finds npx or bunx executable.
 func findCopilotRunner() (string, error) {
 	var npxName string
