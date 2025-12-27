@@ -207,6 +207,17 @@ privategpt:
   enable: false
   upstream-url: "https://privategpt.fptconsulting.co.jp"
   sso-redirect-rewrite: true
+  # DevMode enables automatic environment setup (self-signed cert, port 443, browser launch)
+  # for development without modifying hosts file.
+  dev-mode: false
+
+  # List of supported models available via PrivateGPT
+  models:
+    - "gcp-gemini-2.0-flash"
+    - "azure-gpt-4o"
+    - "fpt-llama-3.3-70b-instruct"
+    - "fpt-deepseek-r1"
+    - "gcp-gemini-2.5-pro"
 
 # GitHub Copilot Integration
 # Requires Node.js installed on the system. Uses the copilot-api npm package to provide

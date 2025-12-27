@@ -253,6 +253,9 @@ type PrivateGPTConfig struct {
 	// DevMode enables automatic environment setup (self-signed cert, port 443, browser launch)
 	// for development without modifying hosts file.
 	DevMode bool `yaml:"dev-mode" json:"dev-mode"`
+
+	// Models lists the supported model IDs for this PrivateGPT instance.
+	Models []string `yaml:"models" json:"models"`
 }
 
 // ClaudeKey represents the configuration for a Claude API key,

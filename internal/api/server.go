@@ -371,6 +371,10 @@ func (s *Server) setupRoutes() {
 	if s.cfg.PrivateGPT.Enable {
 		// PrivateGPT specific endpoints
 		s.engine.GET("/privategpt/token", s.privateGPT.GetCapturedToken)
+		s.engine.GET("/privategpt/models", s.privateGPT.GetModels)
+
+		// Intercept the chat endpoint to adapt the response to OpenAI format
+		s.engine.POST("/api/chat/v1/conversations", s.privateGPT.ChatCompletion)
 
 		// Use NoRoute to catch all other paths not matched by API routes and proxy them to PrivateGPT
 		s.engine.NoRoute(s.privateGPT.ProxyHandler)
