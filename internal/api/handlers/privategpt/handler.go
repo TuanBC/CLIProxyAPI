@@ -18,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api/handlers"
 	log "github.com/sirupsen/logrus"
 )
@@ -152,7 +153,12 @@ func (h *PrivateGPTHandler) GetCapturedToken(c *gin.Context) {
 
 // GetModels returns the list of supported models from the configuration
 func (h *PrivateGPTHandler) GetModels(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"models": h.Config.Models})
+	models := registry.GetPrivateGPTModels()
+	modelIDs := make([]string, len(models))
+	for i, m := range models {
+		modelIDs[i] = m.ID
+	}
+	c.JSON(http.StatusOK, gin.H{"models": modelIDs})
 }
 
 // OpenAIChatCompletionChunk represents a chunk of the OpenAI Chat Completion API response
@@ -264,6 +270,18 @@ func (h *PrivateGPTHandler) ChatCompletion(c *gin.Context) {
 	// Copy headers
 	req.Header = c.Request.Header.Clone()
 	
+	// Automatic Token Injection: If Authorization is missing, try to use the captured token
+	if req.Header.Get("Authorization") == "" {
+		h.tokenMu.RLock()
+		if h.capturedToken != "" {
+			req.Header.Set("Authorization", h.capturedToken)
+			log.Info("Injected captured Authorization token into upstream request")
+		} else {
+			log.Warn("Authorization header missing and no captured token available")
+		}
+		h.tokenMu.RUnlock()
+	}
+
 	// Force headers for upstream compatibility
 	if h.Config.UpstreamURL != "" {
 		req.Header.Set("Origin", h.Config.UpstreamURL)

@@ -7,12 +7,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/handlers/privategpt"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/copilot"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/runtime/executor"
@@ -90,6 +93,9 @@ type Service struct {
 
 	// copilotManager manages the copilot-api external process.
 	copilotManager *copilot.Manager
+
+	// privateGPTServer is the optional HTTP server for PrivateGPT on a separate port
+	privateGPTServer *http.Server
 }
 
 // RegisterUsagePlugin registers a usage plugin on the global usage manager.
@@ -513,6 +519,9 @@ func (s *Service) Run(ctx context.Context) error {
 	// Start Copilot manager if enabled and auto-start is configured
 	s.startCopilotIfEnabled(ctx)
 
+	// Start PrivateGPT server if enabled and port is configured
+	s.startPrivateGPTServer(ctx)
+
 	var watcherWrapper *WatcherWrapper
 	reloadCallback := func(newCfg *config.Config) {
 		previousStrategy := ""
@@ -661,6 +670,13 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		if s.copilotManager != nil {
 			if err := s.copilotManager.Stop(); err != nil {
 				log.Warnf("failed to stop copilot-api: %v", err)
+			}
+		}
+
+		// Stop PrivateGPT server if running
+		if s.privateGPTServer != nil {
+			if err := s.privateGPTServer.Shutdown(ctx); err != nil {
+				log.Warnf("failed to stop privategpt server: %v", err)
 			}
 		}
 
@@ -1300,4 +1316,55 @@ func (s *Service) registerCopilotModels() {
 
 	GlobalModelRegistry().RegisterClient("copilot", "copilot", regModels)
 	log.Infof("Registered %d Copilot models", len(regModels))
+}
+
+// startPrivateGPTServer starts a dedicated HTTP server for PrivateGPT if configured.
+func (s *Service) startPrivateGPTServer(ctx context.Context) {
+	if s.cfg == nil || !s.cfg.PrivateGPT.Enable || s.cfg.PrivateGPT.Port == 0 {
+		return
+	}
+
+	// Create a new Gin request router
+	// We use Default() which attaches Logger and Recovery middleware
+	router := gin.New()
+	router.Use(gin.Recovery())
+	if s.cfg.Debug {
+		router.Use(gin.Logger())
+	}
+
+	handler := privategpt.NewPrivateGPTHandler(nil, &s.cfg.PrivateGPT)
+
+	// Register specific PrivateGPT routes
+	// Root routes for easier access
+	router.GET("/models", handler.GetModels)
+	router.POST("/chat/completions", handler.ChatCompletion)
+	
+	// OpenAI-compatible routes
+	v1 := router.Group("/v1")
+	{
+		v1.GET("/models", handler.GetModels)
+		v1.POST("/chat/completions", handler.ChatCompletion)
+	}
+
+	// Also support the namespaced routes for symmetry with main server
+	pgpt := router.Group("/privategpt")
+	{
+		pgpt.GET("/models", handler.GetModels)
+		pgpt.POST("/chat/completions", handler.ChatCompletion)
+	}
+
+	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.PrivateGPT.Port)
+	server := &http.Server{
+		Addr:    addr,
+		Handler: router,
+	}
+
+	s.privateGPTServer = server
+
+	go func() {
+		log.Infof("PrivateGPT server listening on %s", addr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Errorf("PrivateGPT server error: %v", err)
+		}
+	}()
 }

@@ -883,3 +883,50 @@ func GetCopilotModels() []*ModelInfo {
 		},
 	}
 }
+
+// GetPrivateGPTModels returns the standard models served by PrivateGPT.
+// Note: These models are distinct from other providers and routed to the PrivateGPT proxy.
+func GetPrivateGPTModels() []*ModelInfo {
+	return []*ModelInfo{
+		{
+			ID:          "gcp-gemini-2.0-flash",
+			Object:      "model",
+			Created:     1710374400,
+			OwnedBy:     "privategpt",
+			Type:        "privategpt",
+			DisplayName: "privategpt/gcp-gemini-2.0-flash",
+		},
+		{
+			ID:          "azure-gpt-4o",
+			Object:      "model",
+			Created:     1715644800,
+			OwnedBy:     "privategpt",
+			Type:        "privategpt",
+			DisplayName: "privategpt/azure-gpt-4o",
+		},
+		{
+			ID:          "fpt-llama-3.3-70b-instruct",
+			Object:      "model",
+			Created:     1713398400,
+			OwnedBy:     "privategpt",
+			Type:        "privategpt",
+			DisplayName: "privategpt/fpt-llama-3.3-70b-instruct",
+		},
+		{
+			ID:          "fpt-deepseek-r1",
+			Object:      "model",
+			Created:     1704067200,
+			OwnedBy:     "privategpt",
+			Type:        "privategpt",
+			DisplayName: "privategpt/fpt-deepseek-r1",
+		},
+		{
+			ID:          "gcp-gemini-2.5-pro",
+			Object:      "model",
+			Created:     1709251200,
+			OwnedBy:     "privategpt",
+			Type:        "privategpt",
+			DisplayName: "privategpt/gcp-gemini-2.5-pro",
+		},
+	}
+}

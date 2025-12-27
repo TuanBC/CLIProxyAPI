@@ -244,6 +244,9 @@ type PrivateGPTConfig struct {
 	// Enable toggles whether the PrivateGPT reverse proxy is active.
 	Enable bool `yaml:"enable" json:"enable"`
 
+	// Port is the port on which the PrivateGPT proxy will listen.
+	Port int `yaml:"port" json:"port"`
+
 	// UpstreamURL is the URL of the upstream PrivateGPT server.
 	UpstreamURL string `yaml:"upstream-url" json:"upstream-url"`
 
@@ -253,9 +256,6 @@ type PrivateGPTConfig struct {
 	// DevMode enables automatic environment setup (self-signed cert, port 443, browser launch)
 	// for development without modifying hosts file.
 	DevMode bool `yaml:"dev-mode" json:"dev-mode"`
-
-	// Models lists the supported model IDs for this PrivateGPT instance.
-	Models []string `yaml:"models" json:"models"`
 }
 
 // ClaudeKey represents the configuration for a Claude API key,
