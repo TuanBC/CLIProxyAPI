@@ -255,7 +255,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		currentPath:         wd,
 		envManagementSecret: envManagementSecret,
 		wsRoutes:            make(map[string]struct{}),
-		privateGPT:          privategpthandler.NewPrivateGPTHandler(handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager), &cfg.PrivateGPT),
+		privateGPT:          privategpthandler.NewPrivateGPTHandler(handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager), &cfg.PrivateGPT, cfg.AuthDir),
 	}
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
 	// Save initial YAML snapshot
@@ -335,8 +335,14 @@ func (s *Server) setupRoutes() {
 	v1 := s.engine.Group("/v1")
 	v1.Use(AuthMiddleware(s.accessManager))
 	{
-		v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
-		v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
+		if s.cfg.PrivateGPT.Enable {
+			v1.GET("/models", s.privateGPT.GetModels)
+			v1.POST("/chat/completions", s.privateGPT.ChatCompletion)
+		} else {
+			v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
+			v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
+		}
+		
 		v1.POST("/completions", openaiHandlers.Completions)
 		v1.POST("/messages", claudeCodeHandlers.ClaudeMessages)
 		v1.POST("/messages/count_tokens", claudeCodeHandlers.ClaudeCountTokens)
@@ -371,6 +377,9 @@ func (s *Server) setupRoutes() {
 	if s.cfg.PrivateGPT.Enable {
 		// PrivateGPT specific endpoints
 		s.engine.GET("/privategpt/token", s.privateGPT.GetCapturedToken)
+		s.engine.POST("/privategpt/token", s.privateGPT.SetToken)
+		s.engine.GET("/privategpt/login", s.privateGPT.OpenLogin)
+		s.engine.GET("/privategpt/token-helper", s.privateGPT.TokenHelperPage)
 		s.engine.GET("/privategpt/models", s.privateGPT.GetModels)
 
 		// Intercept the chat endpoint to adapt the response to OpenAI format
@@ -783,8 +792,12 @@ func (s *Server) Start() error {
 
 	// PrivateGPT Dev Mode Overrides
 	if s.cfg != nil && s.cfg.PrivateGPT.Enable && s.cfg.PrivateGPT.DevMode {
-		log.Warn("Starting PrivateGPT Dev Mode: Overriding Port to 443 and enabling TLS with self-signed cert.")
-		s.cfg.Port = 443
+		overridePort := 443
+		if s.cfg.PrivateGPT.Port > 0 {
+			overridePort = s.cfg.PrivateGPT.Port
+		}
+		log.Warnf("Starting PrivateGPT Dev Mode: Overriding Port to %d and enabling TLS with self-signed cert.", overridePort)
+		s.cfg.Port = overridePort
 		s.server.Addr = fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		useTLS = true
 		

@@ -1332,7 +1332,7 @@ func (s *Service) startPrivateGPTServer(ctx context.Context) {
 		router.Use(gin.Logger())
 	}
 
-	handler := privategpt.NewPrivateGPTHandler(nil, &s.cfg.PrivateGPT)
+	handler := privategpt.NewPrivateGPTHandler(nil, &s.cfg.PrivateGPT, s.cfg.AuthDir)
 
 	// Register specific PrivateGPT routes
 	// Root routes for easier access
