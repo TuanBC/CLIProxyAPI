@@ -74,6 +74,37 @@ func (h *PrivateGPTHandler) saveToken(token string) {
 	}
 }
 
+// isPlaceholderKey returns true if the authorization header contains a placeholder/dummy API key
+// that should be ignored in favor of the captured PrivateGPT token.
+// This enables OpenAI SDK compatibility where clients send "sk-dummy" or similar placeholder keys.
+func isPlaceholderKey(authHeader string) bool {
+	if authHeader == "" {
+		return true
+	}
+	// Extract the actual key (remove "Bearer " prefix if present)
+	key := strings.TrimSpace(authHeader)
+	if strings.HasPrefix(strings.ToLower(key), "bearer ") {
+		key = strings.TrimSpace(key[7:])
+	}
+	// Check for common placeholder patterns
+	keyLower := strings.ToLower(key)
+	placeholders := []string{
+		"sk-dummy", "sk-test", "sk-none", "sk-placeholder", "sk-fake",
+		"dummy", "test", "placeholder", "fake", "none", "null",
+		"your-api-key", "your_api_key", "api-key", "api_key",
+	}
+	for _, p := range placeholders {
+		if keyLower == p || strings.HasPrefix(keyLower, p) {
+			return true
+		}
+	}
+	// Check if key starts with "sk-" and is too short to be real (real keys are 40+ chars)
+	if strings.HasPrefix(keyLower, "sk-") && len(key) < 20 {
+		return true
+	}
+	return false
+}
+
 func (h *PrivateGPTHandler) ProxyHandler(c *gin.Context) {
 	if !h.Config.Enable {
 		c.AbortWithStatus(http.StatusNotFound)
@@ -253,140 +284,6 @@ func (h *PrivateGPTHandler) SetToken(c *gin.Context) {
 	
 	log.Info("PrivateGPT token set via API")
 	c.JSON(http.StatusOK, gin.H{"message": "Token set successfully"})
-}
-
-// TokenHelperPage serves an HTML page for token submission that bypasses CSP restrictions.
-// Since fetch from the PrivateGPT website to localhost is blocked by CSP,
-// this page runs on the proxy origin and can submit tokens without CSP issues.
-func (h *PrivateGPTHandler) TokenHelperPage(c *gin.Context) {
-	html := `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PrivateGPT Token Helper</title>
-    <style>
-        :root { --bg-primary: #0a0e14; --bg-secondary: #141a22; --bg-card: #1a232e; --text-primary: #e6edf3; --text-secondary: #8b949e; --accent: #58a6ff; --accent-hover: #79c0ff; --success: #3fb950; --error: #f85149; --border: #30363d; }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, var(--bg-primary), var(--bg-secondary)); min-height: 100vh; display: flex; align-items: center; justify-content: center; color: var(--text-primary); padding: 20px; }
-        .container { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 40px; max-width: 600px; width: 100%; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
-        h1 { font-size: 1.75rem; margin-bottom: 8px; background: linear-gradient(90deg, var(--accent), var(--accent-hover)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .subtitle { color: var(--text-secondary); margin-bottom: 32px; font-size: 0.95rem; }
-        .step { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-        .step-number { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: var(--accent); color: var(--bg-primary); border-radius: 50%; font-size: 0.8rem; font-weight: 600; margin-right: 10px; }
-        .step h3 { display: inline; font-size: 1rem; }
-        .step p { margin-top: 8px; color: var(--text-secondary); font-size: 0.9rem; line-height: 1.5; }
-        .code-block { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-top: 12px; font-family: 'SF Mono', Consolas, monospace; font-size: 0.75rem; color: var(--accent); overflow-x: auto; white-space: pre-wrap; word-break: break-all; position: relative; }
-        .copy-btn { position: absolute; top: 8px; right: 8px; background: var(--border); color: var(--text-secondary); border: none; border-radius: 4px; padding: 4px 8px; font-size: 0.7rem; cursor: pointer; transition: all 0.2s; }
-        .copy-btn:hover { background: var(--accent); color: var(--bg-primary); }
-        .token-input { width: 100%; padding: 14px 16px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); font-size: 0.95rem; margin: 12px 0; transition: border-color 0.2s; }
-        .token-input:focus { outline: none; border-color: var(--accent); }
-        .token-input::placeholder { color: var(--text-secondary); }
-        .submit-btn { width: 100%; padding: 14px 24px; background: linear-gradient(90deg, var(--accent), var(--accent-hover)); color: var(--bg-primary); border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
-        .submit-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(88,166,255,0.4); }
-        .submit-btn:disabled { background: var(--border); cursor: not-allowed; transform: none; box-shadow: none; }
-        .status { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 0.9rem; display: none; }
-        .status.success { display: block; background: rgba(63,185,80,0.15); border: 1px solid var(--success); color: var(--success); }
-        .status.error { display: block; background: rgba(248,81,73,0.15); border: 1px solid var(--error); color: var(--error); }
-        .quick-action { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border); }
-        .quick-action h3 { font-size: 0.95rem; margin-bottom: 12px; color: var(--text-secondary); }
-        .quick-btn { padding: 10px 20px; background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 8px; font-size: 0.9rem; cursor: pointer; transition: all 0.2s; margin-right: 8px; }
-        .quick-btn:hover { background: var(--accent); color: var(--bg-primary); }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🔐 PrivateGPT Token Helper</h1>
-        <p class="subtitle">Bypass CSP restrictions by using this page to submit your token</p>
-        
-        <div class="step">
-            <span class="step-number">1</span><h3>Open PrivateGPT & Login</h3>
-            <p>Navigate to the PrivateGPT website and complete SSO login if needed.</p>
-            <div style="margin-top: 12px;"><button class="quick-btn" onclick="window.open('` + h.Config.UpstreamURL + `', '_blank')">Open PrivateGPT ↗</button></div>
-        </div>
-        
-        <div class="step">
-            <span class="step-number">2</span><h3>Extract Token from Browser Console</h3>
-            <p>Open Developer Tools (F12), go to Console tab, and run this code:</p>
-            <div class="code-block" id="extractCode"><button class="copy-btn" onclick="copyCode('extractCode')">Copy</button>copy(JSON.parse(localStorage.getItem(JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.startsWith('msal.token.keys.')))).accessToken[0])).secret)</div>
-            <p style="margin-top: 8px; font-size: 0.8rem; color: var(--success);">✓ The token will be copied to your clipboard automatically</p>
-        </div>
-        
-        <div class="step">
-            <span class="step-number">3</span><h3>Paste Token Below</h3>
-            <p>Paste the copied token into the input field and click Submit.</p>
-        </div>
-        
-        <form id="tokenForm">
-            <input type="text" class="token-input" id="tokenInput" placeholder="Paste your token here (eyJ... or Bearer eyJ...)" required>
-            <button type="submit" class="submit-btn" id="submitBtn">Submit Token</button>
-        </form>
-        <div class="status" id="status"></div>
-        
-        <div class="quick-action">
-            <h3>Quick Actions</h3>
-            <button class="quick-btn" onclick="checkToken()">Check Current Token</button>
-            <button class="quick-btn" onclick="testAPI()">Test API</button>
-        </div>
-    </div>
-    
-    <script>
-        function copyCode(id) {
-            const code = document.getElementById(id).textContent.replace('Copy', '').trim();
-            navigator.clipboard.writeText(code).then(() => {
-                const btn = document.querySelector('#' + id + ' .copy-btn');
-                btn.textContent = 'Copied!';
-                setTimeout(() => btn.textContent = 'Copy', 2000);
-            });
-        }
-        function showStatus(msg, isError) {
-            const s = document.getElementById('status');
-            s.textContent = msg;
-            s.className = 'status ' + (isError ? 'error' : 'success');
-        }
-        document.getElementById('tokenForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const input = document.getElementById('tokenInput');
-            const btn = document.getElementById('submitBtn');
-            let token = input.value.trim();
-            if (!token) { showStatus('Please enter a token', true); return; }
-            if (!token.startsWith('Bearer ')) token = 'Bearer ' + token;
-            btn.disabled = true; btn.textContent = 'Submitting...';
-            try {
-                const r = await fetch('/privategpt/token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
-                const d = await r.json();
-                if (r.ok) { showStatus('✓ Token saved! You can now use the API.', false); input.value = ''; }
-                else showStatus('✗ Error: ' + (d.error || 'Failed'), true);
-            } catch (err) { showStatus('✗ Network error: ' + err.message, true); }
-            finally { btn.disabled = false; btn.textContent = 'Submit Token'; }
-        });
-        async function checkToken() {
-            try {
-                const r = await fetch('/privategpt/token');
-                const d = await r.json();
-                if (r.ok && d.token) showStatus('✓ Token configured: ' + d.token.substring(0, 30) + '...', false);
-                else showStatus('No token configured yet.', true);
-            } catch (err) { showStatus('✗ Error: ' + err.message, true); }
-        }
-        async function testAPI() {
-            showStatus('Sending test message...', false);
-            try {
-                const r = await fetch('/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: 'azure-gpt-4o', messages: [{ role: 'user', content: 'Reply with just "OK"' }], stream: false })
-                });
-                const d = await r.json();
-                const s = document.getElementById('status');
-                s.className = 'status ' + (r.ok ? 'success' : 'error');
-                s.innerHTML = '<pre style="white-space:pre-wrap;word-break:break-all;margin:0;font-size:0.8rem;">' + JSON.stringify(d, null, 2) + '</pre>';
-            } catch (err) { showStatus('✗ Test failed: ' + err.message, true); }
-        }
-    </script>
-</body>
-</html>`
-	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusOK, html)
 }
 
 // OpenLogin opens the browser to PrivateGPT login page and shows instructions
@@ -603,8 +500,8 @@ func (h *PrivateGPTHandler) ChatCompletion(c *gin.Context) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	
-	// Automatic Token Injection
-	if req.Header.Get("Authorization") == "" {
+	// Automatic Token Injection - inject captured token if no auth or placeholder key
+	if isPlaceholderKey(req.Header.Get("Authorization")) {
 		h.tokenMu.RLock()
 		if h.capturedToken != "" {
 			req.Header.Set("Authorization", h.capturedToken)
@@ -683,6 +580,24 @@ func (h *PrivateGPTHandler) handleStreamingResponse(c *gin.Context, upstreamBody
 	c.Stream(func(w io.Writer) bool {
 		line, err := reader.ReadString('\n')
 		if err != nil {
+			// End of stream - send final chunk with finish_reason
+			finishReason := "stop"
+			finalChunk := OpenAIChatCompletionChunk{
+				ID:      id,
+				Object:  "chat.completion.chunk",
+				Created: created,
+				Model:   model,
+				Choices: []OpenAIChatCompletionChoice{
+					{
+						Index:        0,
+						Delta:        OpenAIDelta{},
+						FinishReason: &finishReason,
+					},
+				},
+			}
+			finalBytes, _ := json.Marshal(finalChunk)
+			fmt.Fprintf(w, "data: %s\n\n", finalBytes)
+			w.Write([]byte("data: [DONE]\n\n"))
 			return false
 		}
 
@@ -691,9 +606,32 @@ func (h *PrivateGPTHandler) handleStreamingResponse(c *gin.Context, upstreamBody
 			return true
 		}
 
+		// Handle DONE event - send final chunk with finish_reason
 		if strings.HasPrefix(line, "event: DONE") {
+			finishReason := "stop"
+			finalChunk := OpenAIChatCompletionChunk{
+				ID:      id,
+				Object:  "chat.completion.chunk",
+				Created: created,
+				Model:   model,
+				Choices: []OpenAIChatCompletionChoice{
+					{
+						Index:        0,
+						Delta:        OpenAIDelta{},
+						FinishReason: &finishReason,
+					},
+				},
+			}
+			finalBytes, _ := json.Marshal(finalChunk)
+			fmt.Fprintf(w, "data: %s\n\n", finalBytes)
 			w.Write([]byte("data: [DONE]\n\n"))
 			return false
+		}
+
+		// Skip event types that aren't data
+		if strings.HasPrefix(line, "event:") && !strings.HasPrefix(line, "event: data") {
+			// Skip unknown event types (like error events)
+			return true
 		}
 
 		jsonStr := ""
@@ -801,6 +739,577 @@ func (h *PrivateGPTHandler) handleNonStreamingResponse(c *gin.Context, upstreamB
 			PromptTokens:     0,
 			CompletionTokens: 0,
 			TotalTokens:      0,
+		},
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// OpenAI Completions API types
+type OpenAICompletionsRequest struct {
+	Model       string      `json:"model"`
+	Prompt      string      `json:"prompt"`
+	MaxTokens   int         `json:"max_tokens,omitempty"`
+	Temperature float64     `json:"temperature,omitempty"`
+	Stream      bool        `json:"stream"`
+	Stop        interface{} `json:"stop,omitempty"`
+}
+
+type OpenAICompletionsResponse struct {
+	ID      string                        `json:"id"`
+	Object  string                        `json:"object"`
+	Created int64                         `json:"created"`
+	Model   string                        `json:"model"`
+	Choices []OpenAICompletionsChoice     `json:"choices"`
+	Usage   *OpenAIUsage                  `json:"usage,omitempty"`
+}
+
+type OpenAICompletionsChoice struct {
+	Index        int     `json:"index"`
+	Text         string  `json:"text"`
+	FinishReason *string `json:"finish_reason"`
+}
+
+// OpenAI Responses API types  
+type OpenAIResponsesRequest struct {
+	Model        string `json:"model"`
+	Input        string `json:"input"`
+	Instructions string `json:"instructions,omitempty"`
+	Stream       bool   `json:"stream"`
+}
+
+// Completions handles the /v1/completions endpoint for PrivateGPT
+func (h *PrivateGPTHandler) Completions(c *gin.Context) {
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		log.Errorf("Failed to read request body: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read request body"})
+		return
+	}
+
+	var completionsReq OpenAICompletionsRequest
+	if err := json.Unmarshal(bodyBytes, &completionsReq); err != nil {
+		log.Warnf("Failed to parse completions request: %v", err)
+	}
+
+	// Use prompt as the question
+	question := completionsReq.Prompt
+	if question == "" {
+		question = "Complete this:"
+	}
+
+	modelID := completionsReq.Model
+	if modelID == "" {
+		modelID = "azure-gpt-4o"
+	}
+
+	upstreamReq := PrivateGPTRequest{
+		ParentMessageID: nil,
+		Question:        question,
+		Metadata:        map[string]interface{}{"attachments": []interface{}{}},
+		ModelID:         modelID,
+		Tools:           []interface{}{},
+	}
+
+	pgptBody, err := json.Marshal(upstreamReq)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode upstream request"})
+		return
+	}
+
+	upstreamURL := h.Config.UpstreamURL + "/api/chat/v1/conversations"
+	
+	req, err := http.NewRequest("POST", upstreamURL, bytes.NewBuffer(pgptBody))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upstream request"})
+		return
+	}
+
+	for k, v := range c.Request.Header {
+		if k == "Content-Type" || k == "Content-Length" || k == "Accept-Encoding" {
+			continue
+		}
+		req.Header[k] = v
+	}
+	req.Header.Set("Content-Type", "application/json")
+	
+	if isPlaceholderKey(req.Header.Get("Authorization")) {
+		h.tokenMu.RLock()
+		if h.capturedToken != "" {
+			req.Header.Set("Authorization", h.capturedToken)
+		}
+		h.tokenMu.RUnlock()
+	}
+
+	if h.Config.UpstreamURL != "" {
+		req.Header.Set("Origin", h.Config.UpstreamURL)
+		req.Header.Set("Referer", h.Config.UpstreamURL)
+	}
+	u, _ := url.Parse(h.Config.UpstreamURL)
+	req.Host = u.Host
+
+	req.Header.Set("Accept", "text/event-stream")
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Upstream request failed: %v", err)})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			respBody, _ := io.ReadAll(resp.Body)
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error":   "token_expired",
+				"message": "Your PrivateGPT authentication token is missing or expired.",
+				"upstream_error": string(respBody),
+			})
+			return
+		}
+		c.Status(resp.StatusCode)
+		io.Copy(c.Writer, resp.Body)
+		return
+	}
+
+	completionID := fmt.Sprintf("cmpl-%d", time.Now().UnixNano())
+	created := time.Now().Unix()
+
+	if completionsReq.Stream {
+		h.handleCompletionsStreamingResponse(c, resp.Body, completionID, created, modelID)
+	} else {
+		h.handleCompletionsNonStreamingResponse(c, resp.Body, completionID, created, modelID)
+	}
+}
+
+func (h *PrivateGPTHandler) handleCompletionsStreamingResponse(c *gin.Context, upstreamBody io.Reader, id string, created int64, model string) {
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+
+	reader := bufio.NewReader(upstreamBody)
+	finishReason := "stop"
+
+	c.Stream(func(w io.Writer) bool {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			// End of stream - send final chunk with finish_reason
+			finalChunk := map[string]interface{}{
+				"id":      id,
+				"object":  "text_completion",
+				"created": created,
+				"model":   model,
+				"choices": []map[string]interface{}{
+					{
+						"index":         0,
+						"text":          "",
+						"finish_reason": finishReason,
+					},
+				},
+			}
+			finalBytes, _ := json.Marshal(finalChunk)
+			fmt.Fprintf(w, "data: %s\n\n", finalBytes)
+			w.Write([]byte("data: [DONE]\n\n"))
+			return false
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return true
+		}
+
+		if strings.HasPrefix(line, "event: DONE") {
+			// Send final chunk with finish_reason
+			finalChunk := map[string]interface{}{
+				"id":      id,
+				"object":  "text_completion",
+				"created": created,
+				"model":   model,
+				"choices": []map[string]interface{}{
+					{
+						"index":         0,
+						"text":          "",
+						"finish_reason": finishReason,
+					},
+				},
+			}
+			finalBytes, _ := json.Marshal(finalChunk)
+			fmt.Fprintf(w, "data: %s\n\n", finalBytes)
+			w.Write([]byte("data: [DONE]\n\n"))
+			return false
+		}
+
+		// Skip unknown event types
+		if strings.HasPrefix(line, "event:") && !strings.HasPrefix(line, "event: data") {
+			return true
+		}
+
+		jsonStr := ""
+		if strings.HasPrefix(line, "event: data") {
+			dataLine, err := reader.ReadString('\n')
+			if err != nil {
+				return false
+			}
+			dataLine = strings.TrimSpace(dataLine)
+			if strings.HasPrefix(dataLine, "data: ") {
+				jsonStr = strings.TrimPrefix(dataLine, "data: ")
+			}
+		} else if strings.HasPrefix(line, "data: ") {
+			jsonStr = strings.TrimPrefix(line, "data: ")
+		}
+
+		if jsonStr != "" {
+			var dataObj map[string]interface{}
+			if err := json.Unmarshal([]byte(jsonStr), &dataObj); err == nil {
+				if v, ok := dataObj["v"].(string); ok && v != "" {
+					chunk := map[string]interface{}{
+						"id":      id,
+						"object":  "text_completion",
+						"created": created,
+						"model":   model,
+						"choices": []map[string]interface{}{
+							{
+								"index": 0,
+								"text":  v,
+							},
+						},
+					}
+					chunkBytes, _ := json.Marshal(chunk)
+					fmt.Fprintf(w, "data: %s\n\n", chunkBytes)
+				}
+			}
+		}
+
+		return true
+	})
+}
+
+func (h *PrivateGPTHandler) handleCompletionsNonStreamingResponse(c *gin.Context, upstreamBody io.Reader, id string, created int64, model string) {
+	reader := bufio.NewReader(upstreamBody)
+	var fullContent strings.Builder
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			break
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		if strings.HasPrefix(line, "event: DONE") {
+			break
+		}
+
+		jsonStr := ""
+		if strings.HasPrefix(line, "event: data") {
+			dataLine, err := reader.ReadString('\n')
+			if err != nil {
+				break
+			}
+			dataLine = strings.TrimSpace(dataLine)
+			if strings.HasPrefix(dataLine, "data: ") {
+				jsonStr = strings.TrimPrefix(dataLine, "data: ")
+			}
+		} else if strings.HasPrefix(line, "data: ") {
+			jsonStr = strings.TrimPrefix(line, "data: ")
+		}
+
+		if jsonStr != "" {
+			var dataObj map[string]interface{}
+			if err := json.Unmarshal([]byte(jsonStr), &dataObj); err == nil {
+				if v, ok := dataObj["v"].(string); ok {
+					fullContent.WriteString(v)
+				}
+			}
+		}
+	}
+
+	finishReason := "stop"
+	response := OpenAICompletionsResponse{
+		ID:      id,
+		Object:  "text_completion",
+		Created: created,
+		Model:   model,
+		Choices: []OpenAICompletionsChoice{
+			{
+				Index:        0,
+				Text:         fullContent.String(),
+				FinishReason: &finishReason,
+			},
+		},
+		Usage: &OpenAIUsage{
+			PromptTokens:     0,
+			CompletionTokens: 0,
+			TotalTokens:      0,
+		},
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// Responses handles the /v1/responses endpoint for PrivateGPT
+func (h *PrivateGPTHandler) Responses(c *gin.Context) {
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		log.Errorf("Failed to read request body: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read request body"})
+		return
+	}
+
+	var responsesReq OpenAIResponsesRequest
+	if err := json.Unmarshal(bodyBytes, &responsesReq); err != nil {
+		log.Warnf("Failed to parse responses request: %v", err)
+	}
+
+	// Combine input and instructions into question
+	question := responsesReq.Input
+	if responsesReq.Instructions != "" {
+		question = responsesReq.Instructions + "\n\n" + responsesReq.Input
+	}
+	if question == "" {
+		question = "Respond to this:"
+	}
+
+	modelID := responsesReq.Model
+	if modelID == "" {
+		modelID = "azure-gpt-4o"
+	}
+
+	upstreamReq := PrivateGPTRequest{
+		ParentMessageID: nil,
+		Question:        question,
+		Metadata:        map[string]interface{}{"attachments": []interface{}{}},
+		ModelID:         modelID,
+		Tools:           []interface{}{},
+	}
+
+	pgptBody, err := json.Marshal(upstreamReq)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode upstream request"})
+		return
+	}
+
+	upstreamURL := h.Config.UpstreamURL + "/api/chat/v1/conversations"
+	
+	req, err := http.NewRequest("POST", upstreamURL, bytes.NewBuffer(pgptBody))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upstream request"})
+		return
+	}
+
+	for k, v := range c.Request.Header {
+		if k == "Content-Type" || k == "Content-Length" || k == "Accept-Encoding" {
+			continue
+		}
+		req.Header[k] = v
+	}
+	req.Header.Set("Content-Type", "application/json")
+	
+	if isPlaceholderKey(req.Header.Get("Authorization")) {
+		h.tokenMu.RLock()
+		if h.capturedToken != "" {
+			req.Header.Set("Authorization", h.capturedToken)
+		}
+		h.tokenMu.RUnlock()
+	}
+
+	if h.Config.UpstreamURL != "" {
+		req.Header.Set("Origin", h.Config.UpstreamURL)
+		req.Header.Set("Referer", h.Config.UpstreamURL)
+	}
+	u, _ := url.Parse(h.Config.UpstreamURL)
+	req.Host = u.Host
+
+	req.Header.Set("Accept", "text/event-stream")
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Upstream request failed: %v", err)})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			respBody, _ := io.ReadAll(resp.Body)
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error":   "token_expired",
+				"message": "Your PrivateGPT authentication token is missing or expired.",
+				"upstream_error": string(respBody),
+			})
+			return
+		}
+		c.Status(resp.StatusCode)
+		io.Copy(c.Writer, resp.Body)
+		return
+	}
+
+	responseID := fmt.Sprintf("resp-%d", time.Now().UnixNano())
+	created := time.Now().Unix()
+
+	if responsesReq.Stream {
+		h.handleResponsesStreamingResponse(c, resp.Body, responseID, created, modelID)
+	} else {
+		h.handleResponsesNonStreamingResponse(c, resp.Body, responseID, created, modelID)
+	}
+}
+
+func (h *PrivateGPTHandler) handleResponsesStreamingResponse(c *gin.Context, upstreamBody io.Reader, id string, created int64, model string) {
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+
+	reader := bufio.NewReader(upstreamBody)
+
+	c.Stream(func(w io.Writer) bool {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return false
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return true
+		}
+
+		if strings.HasPrefix(line, "event: DONE") {
+			// Send response.completed event
+			completedEvent := map[string]interface{}{
+				"type": "response.completed",
+				"response": map[string]interface{}{
+					"id":     id,
+					"object": "response",
+					"status": "completed",
+				},
+			}
+			completedBytes, _ := json.Marshal(completedEvent)
+			fmt.Fprintf(w, "event: response.completed\ndata: %s\n\n", completedBytes)
+			return false
+		}
+
+		// Skip unknown event types
+		if strings.HasPrefix(line, "event:") && !strings.HasPrefix(line, "event: data") {
+			return true
+		}
+
+		jsonStr := ""
+		if strings.HasPrefix(line, "event: data") {
+			dataLine, err := reader.ReadString('\n')
+			if err != nil {
+				return false
+			}
+			dataLine = strings.TrimSpace(dataLine)
+			if strings.HasPrefix(dataLine, "data: ") {
+				jsonStr = strings.TrimPrefix(dataLine, "data: ")
+			}
+		} else if strings.HasPrefix(line, "data: ") {
+			jsonStr = strings.TrimPrefix(line, "data: ")
+		}
+
+		if jsonStr != "" {
+			var dataObj map[string]interface{}
+			if err := json.Unmarshal([]byte(jsonStr), &dataObj); err == nil {
+				if v, ok := dataObj["v"].(string); ok && v != "" {
+					// Send response.output_text.delta event
+					deltaEvent := map[string]interface{}{
+						"type":  "response.output_text.delta",
+						"delta": v,
+					}
+					deltaBytes, _ := json.Marshal(deltaEvent)
+					fmt.Fprintf(w, "event: response.output_text.delta\ndata: %s\n\n", deltaBytes)
+				}
+			}
+		}
+
+		return true
+	})
+}
+
+func (h *PrivateGPTHandler) handleResponsesNonStreamingResponse(c *gin.Context, upstreamBody io.Reader, id string, created int64, model string) {
+	reader := bufio.NewReader(upstreamBody)
+	var fullContent strings.Builder
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			break
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		if strings.HasPrefix(line, "event: DONE") {
+			break
+		}
+
+		jsonStr := ""
+		if strings.HasPrefix(line, "event: data") {
+			dataLine, err := reader.ReadString('\n')
+			if err != nil {
+				break
+			}
+			dataLine = strings.TrimSpace(dataLine)
+			if strings.HasPrefix(dataLine, "data: ") {
+				jsonStr = strings.TrimPrefix(dataLine, "data: ")
+			}
+		} else if strings.HasPrefix(line, "data: ") {
+			jsonStr = strings.TrimPrefix(line, "data: ")
+		}
+
+		if jsonStr != "" {
+			var dataObj map[string]interface{}
+			if err := json.Unmarshal([]byte(jsonStr), &dataObj); err == nil {
+				if v, ok := dataObj["v"].(string); ok {
+					fullContent.WriteString(v)
+				}
+			}
+		}
+	}
+
+	// Build OpenAI Responses format
+	response := gin.H{
+		"id":         id,
+		"object":     "response",
+		"created_at": created,
+		"model":      model,
+		"status":     "completed",
+		"output": []gin.H{
+			{
+				"type": "message",
+				"role": "assistant",
+				"content": []gin.H{
+					{
+						"type": "output_text",
+						"text": fullContent.String(),
+					},
+				},
+			},
+		},
+		"usage": gin.H{
+			"input_tokens":  0,
+			"output_tokens": 0,
+			"total_tokens":  0,
 		},
 	}
 

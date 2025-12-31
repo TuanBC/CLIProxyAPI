@@ -338,15 +338,17 @@ func (s *Server) setupRoutes() {
 		if s.cfg.PrivateGPT.Enable {
 			v1.GET("/models", s.privateGPT.GetModels)
 			v1.POST("/chat/completions", s.privateGPT.ChatCompletion)
+			v1.POST("/completions", s.privateGPT.Completions)
+			v1.POST("/responses", s.privateGPT.Responses)
 		} else {
 			v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
 			v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
+			v1.POST("/completions", openaiHandlers.Completions)
+			v1.POST("/responses", openaiResponsesHandlers.Responses)
 		}
 		
-		v1.POST("/completions", openaiHandlers.Completions)
 		v1.POST("/messages", claudeCodeHandlers.ClaudeMessages)
 		v1.POST("/messages/count_tokens", claudeCodeHandlers.ClaudeCountTokens)
-		v1.POST("/responses", openaiResponsesHandlers.Responses)
 	}
 
 	// Gemini compatible API routes
@@ -379,7 +381,6 @@ func (s *Server) setupRoutes() {
 		s.engine.GET("/privategpt/token", s.privateGPT.GetCapturedToken)
 		s.engine.POST("/privategpt/token", s.privateGPT.SetToken)
 		s.engine.GET("/privategpt/login", s.privateGPT.OpenLogin)
-		s.engine.GET("/privategpt/token-helper", s.privateGPT.TokenHelperPage)
 		s.engine.GET("/privategpt/models", s.privateGPT.GetModels)
 
 		// Intercept the chat endpoint to adapt the response to OpenAI format

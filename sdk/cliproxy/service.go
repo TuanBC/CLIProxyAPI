@@ -1338,12 +1338,16 @@ func (s *Service) startPrivateGPTServer(ctx context.Context) {
 	// Root routes for easier access
 	router.GET("/models", handler.GetModels)
 	router.POST("/chat/completions", handler.ChatCompletion)
+	router.POST("/completions", handler.Completions)
+	router.POST("/responses", handler.Responses)
 	
 	// OpenAI-compatible routes
 	v1 := router.Group("/v1")
 	{
 		v1.GET("/models", handler.GetModels)
 		v1.POST("/chat/completions", handler.ChatCompletion)
+		v1.POST("/completions", handler.Completions)
+		v1.POST("/responses", handler.Responses)
 	}
 
 	// Also support the namespaced routes for symmetry with main server
